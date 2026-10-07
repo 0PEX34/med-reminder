@@ -1,4 +1,4 @@
-// Чистый IndexedDB без сторонних библиотек (idb / dexie не требуются)
+// Чистый IndexedDB без сторонних библиотек
 
 export interface Medication {
   id?: number;
@@ -57,19 +57,13 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains('medications')) {
-        db.createObjectStore('medications', { keyPath: 'id', autoIncrement: true });
-      }
-      if (!db.objectStoreNames.contains('doctorVisits')) {
-        db.createObjectStore('doctorVisits', { keyPath: 'id', autoIncrement: true });
-      }
-      if (!db.objectStoreNames.contains('nurseTasks')) {
-        db.createObjectStore('nurseTasks', { keyPath: 'id', autoIncrement: true });
-      }
-      if (!db.objectStoreNames.contains('intakeLogs')) {
-        db.createObjectStore('intakeLogs', { keyPath: 'id', autoIncrement: true });
-      }
+      const database = request.result;
+      const stores = ['medications', 'doctorVisits', 'nurseTasks', 'intakeLogs'];
+      stores.forEach((store) => {
+        if (!database.objectStoreNames.contains(store)) {
+          database.createObjectStore(store, { keyPath: 'id', autoIncrement: true });
+        }
+      });
     };
 
     request.onsuccess = () => resolve(request.result);
@@ -77,53 +71,54 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
+// Функции getAll и putItem для src/app/page.tsx
+export async function getAll<T = any>(storeName: string): Promise<T[]> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result as T[]);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function putItem<T = any>(storeName: string, item: T): Promise<number> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const req = store.put(item);
+    req.onsuccess = () => resolve(req.result as number);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 function createTableWrapper<T>(storeName: string) {
   return {
-    async toArray(): Promise<T[]> {
-      const db = await openDatabase();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, 'readonly');
-        const store = tx.objectStore(storeName);
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result as T[]);
-        req.onerror = () => reject(req.error);
-      });
-    },
-
-    async add(item: T): Promise<number> {
-      const db = await openDatabase();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, 'readwrite');
-        const store = tx.objectStore(storeName);
-        const req = store.add(item);
-        req.onsuccess = () => resolve(req.result as number);
-        req.onerror = () => reject(req.error);
-      });
-    },
-
+    toArray: () => getAll<T>(storeName),
+    add: (item: T) => putItem<T>(storeName, item),
     async update(id: number, changes: Partial<T>): Promise<void> {
-      const db = await openDatabase();
+      const database = await openDatabase();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, 'readwrite');
+        const tx = database.transaction(storeName, 'readwrite');
         const store = tx.objectStore(storeName);
         const getReq = store.get(id);
 
         getReq.onsuccess = () => {
           const current = getReq.result;
           if (!current) return resolve();
-          const updated = { ...current, ...changes };
-          const putReq = store.put(updated);
+          const putReq = store.put({ ...current, ...changes });
           putReq.onsuccess = () => resolve();
           putReq.onerror = () => reject(putReq.error);
         };
         getReq.onerror = () => reject(getReq.error);
       });
     },
-
     reverse() {
       return {
         sortBy: async (_field: string): Promise<T[]> => {
-          const list = await this.toArray();
+          const list = await getAll<T>(storeName);
           return list.reverse();
         }
       };
